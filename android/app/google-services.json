@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "416231278203",
+    "firebase_url": "https://monitoramento-vulneravei-3c9ae-default-rtdb.firebaseio.com",
+    "project_id": "monitoramento-vulneravei-3c9ae",
+    "storage_bucket": "monitoramento-vulneravei-3c9ae.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:416231278203:android:24826146f4434ba26404de",
+        "android_client_info": {
+          "package_name": "com.monitoramento_vulneraveis"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCbw5J22UUWmgjTxjqs5RP07kTBZDLa2OU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
