@@ -1,0 +1,463 @@
+void init_gsm();
+void gprs_connect();
+boolean gprs_disconnect();
+boolean is_gprs_connected();
+void post_to_firebase(String data);
+boolean waitResponse(String expected_answer="OK", unsigned int timeout=2000);
+float latitude, longitude;
+unsigned long idadeInfo;
+int cont=0;
+String data;
+
+//===================================================================================
+#include <SoftwareSerial.h>
+#define rxPin 10
+#define txPin 11
+SoftwareSerial SIM800(rxPin,txPin);
+//===================================================================================
+#include <TinyGPS.h>
+SoftwareSerial serialGPS(5, 6); // RX, TX
+TinyGPS gps1;
+//===================================================================================
+#include <virtuabotixRTC.h>                    //biblioteca para o RTC DS1302   
+
+// --- Mapeamento ---
+#define   clk   7
+#define   dat   8
+#define   rst   9
+
+// --- Declaração de Objetos ---
+virtuabotixRTC   myRTC(clk, dat, rst);         //declara objeto para o RTC
+//----------------------------------------------------------------------------------
+
+// --- Declarar as confirgurações de operadora para comunicação HTTP ---
+
+//https://tecnoblog.net/responde/configurar-apn-vivo-android-galaxy/  //Link para consulta
+//https://pt.scribd.com/doc/155913102/APN-Principais-Operadoras       //Link para consulta
+
+/*
+//Configuração APN para operadora Vivo
+const String APN  = "zap.vivo.com.br";
+const String USER = "vivo";
+const String PASS = "vivo";
+*/
+
+//Configuração APN para operadora Tim
+const String APN  = "tim.br";
+const String USER = "tim";
+const String PASS = "tim";
+
+//===================================================================================
+
+// --- Configuração de acesso Firebase ---
+
+const String FIREBASE_HOST  = "monitoramento-vulneravei-3c9ae-default-rtdb.firebaseio.com/GPS01";
+const String FIREBASE_SECRET  = "kocrEL7Z3hGoxZoseayp5FvKGFQalH34AwyJztcH";
+String datetime;
+String hora;
+
+
+#define USE_SSL true
+#define DELAY_MS 500
+
+
+//===================================================================================
+
+// --- Setup ---
+
+void setup() {
+
+  //Begin serial GPS
+  serialGPS.begin(9600);
+
+  //Begin serial communication with Serial Monitor
+  Serial.begin(9600);
+
+  //Begin serial communication with SIM800
+  SIM800.begin(9600);
+  
+  Serial.println("Initializing SIM800...");
+  init_gsm();
+}
+
+
+
+//===================================================================================
+
+// --- loop ---
+
+void loop() {
+
+  //===================================================================================
+  // --- Captação de localização ---
+  //===================================================================================
+  if(cont < 2){ //Os dois primeiros pacotes de envio são teste, Validando a comunicação
+    data = get_LocalizacaoInit();
+    Serial.println(data);
+    Serial.println(cont);
+    cont+=1;
+  }else{ //Envio da localização verdadeira, pacote real
+    data = get_Localizacao();
+    Serial.println(data);
+  }
+
+  //===================================================================================
+  // --- Verifica conexão GPRS (Internet) e conecta caso necessário ---
+  //===================================================================================
+
+  if(!is_gprs_connected()){
+    gprs_connect();
+  }
+
+  //===================================================================================
+  // --- Envio dos dados de localização, data e horario via SIM800L com diretório Firebase ---
+  //===================================================================================
+  
+  datetime = get_calendario();
+  hora = get_hora();
+  Serial.print("Data: ");
+  Serial.println(datetime);
+  Serial.print("Hora: ");
+  Serial.println(hora);
+  post_to_firebase(data);
+  
+  delay(1000);
+
+}
+
+String get_hora(){
+
+  myRTC.updateTime();
+
+  String hr = (myRTC.hours < 10) ? "0" + String(myRTC.hours) + ":" : String(myRTC.hours) + ":";
+  String min = (myRTC.minutes < 10) ? "0" + String(myRTC.minutes) + ":" : String(myRTC.minutes) + String(":");
+  String seg = (myRTC.seconds < 10) ? "0" + String(myRTC.seconds) : String(myRTC.seconds);
+
+  String getHoraCompleta = hr+min+seg;
+
+  return getHoraCompleta;
+}
+
+
+String get_calendario(){
+
+  myRTC.updateTime();
+
+  String date= String(myRTC.dayofmonth) + "-" + String(myRTC.month) + "-" + String(myRTC.year);
+
+  return date;
+}
+
+
+//===================================================================================
+// --- get_Localizacao faz a captação da localização ---
+//===================================================================================
+String get_Localizacao()
+{
+  serialGPS.listen();
+  bool recebido = false;
+  unsigned long delayPrint = 0;
+
+  while (!recebido) {
+    while (serialGPS.available()) {
+      char cIn = serialGPS.read();
+      recebido = gps1.encode(cIn);  // Apenas atualiza recebido com o resultado da codificação do GPS
+    }
+
+    if (recebido && (millis() - delayPrint) > 1000) {
+      delayPrint = millis();
+
+      gps1.f_get_position(&latitude, &longitude, &idadeInfo);
+
+      if (latitude != TinyGPS::GPS_INVALID_F_ANGLE && longitude != TinyGPS::GPS_INVALID_F_ANGLE) {
+        // Apenas se ambas as coordenadas são válidas, então imprima e retorne a string
+        Serial.print("Latitude: ");
+        Serial.println(latitude, 6);
+        Serial.print("Longitude: ");
+        Serial.println(longitude, 6);
+
+        // Construa a string apenas se as coordenadas são válidas
+        String Data = "{";
+        Data += "\"Long\":\"" + String(longitude, 4) + "\",";
+        Data += "\"Lat\":\"" + String(latitude, 4) + "\"";
+        Data += "}";
+        
+        return Data;
+      }
+    }
+  }
+
+  // Retorna uma string vazia se não houver dados válidos (deve ser inatingível neste ponto)
+  return "";
+}
+
+//====================================================================================
+// --- get_LocalizacaoInit faz a captação da localização para teste de comunicação ---
+//====================================================================================
+String get_LocalizacaoInit(){
+ 
+  String Data = "{";
+  Data += "\"Long\":\"" + String(-00) + "\",";
+  Data += "\"Lat\":\"" + String(-00) + "\"";
+  Data += "}";
+
+  return Data;
+
+}
+
+
+
+//===================================================================================
+// --- post_to_firebase Faz o envio dos dados captados para o firebase ---
+//===================================================================================
+void post_to_firebase(String data)
+{
+  
+  //Iniciar conexão HTTP
+  SIM800.listen();
+  Serial.println("Iniciando Envio Firebase...");
+  Serial.println(data);
+  SIM800.println("AT+HTTPINIT");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Habilitando SSL 1.0
+  if(USE_SSL == true){
+    SIM800.println("AT+HTTPSSL=1");
+    waitResponse();
+    delay(DELAY_MS);
+  }
+  //===================================================================================
+  //Configurando parâmetros para sessão HTTP
+  SIM800.println("AT+HTTPPARA=\"CID\",1");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Defina o URL HTTP - URL do Firebase e FIREBASE SECRET
+  SIM800.println("AT+HTTPPARA=\"URL\","+FIREBASE_HOST+"/"+datetime+hora+".json?auth="+FIREBASE_SECRET);
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Configurando re direto
+  SIM800.println("AT+HTTPPARA=\"REDIR\",1");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Configurando o tipo de conteúdo
+  SIM800.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Configurando o tamanho dos dados
+  //+HTTPACTION: 1.601,0 – erro ocorre se o comprimento dos dados não estiver correto
+  SIM800.println("AT+HTTPDATA=" + String(data.length()) + ",10000");
+  waitResponse("DOWNLOAD");
+  //===================================================================================
+  //Envio de dados
+  SIM800.println(data);
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Enviando solicitação HTTP POST
+  SIM800.println("AT+HTTPACTION=1");
+  
+  for (uint32_t start = millis(); millis() - start < 20000;){
+    while(!SIM800.available());
+    String response = SIM800.readString();
+    if(response.indexOf("+HTTPACTION:") > 0)
+    {
+      Serial.print(response);
+      break;
+    }
+  }
+    
+  delay(DELAY_MS);
+  //===================================================================================
+  //+HTTPACTION: 1.603.0 (falha no POST para Firebase)
+  //+HTTPACTION: 0.200,0 (POST no Firebase com sucesso)
+  //Leia a resposta
+  SIM800.println("AT+HTTPREAD");
+  waitResponse("OK");
+  delay(DELAY_MS);
+  //===================================================================================
+  //Pare a conexão HTTP
+  SIM800.println("AT+HTTPTERM");
+  waitResponse("OK",1000);
+  delay(DELAY_MS);
+  //===================================================================================
+}
+
+
+
+
+
+//===================================================================================
+// --- init_gsm faz as configurações e testes iniciais ---
+//===================================================================================
+void init_gsm()
+{
+  //===================================================================================
+  //Testando o Comando AT
+  SIM800.println("AT");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Verifica se o SIM está pronto
+  SIM800.println("AT+CPIN?");
+  waitResponse("+CPIN: READY");
+  delay(DELAY_MS);
+  //===================================================================================
+  //Ativando funcionalidade completa
+  SIM800.println("AT+CFUN=1");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Ative códigos de erro detalhados
+  SIM800.println("AT+CMEE=2");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Ativar verificações de bateria
+  SIM800.println("AT+CBATCHK=1");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //Registrar Rede (+CREG: 0,1 ou +CREG: 0,5 para rede válida)
+  //+CREG: 0,1 ou +CREG: 0,5 para conexão de rede válida
+  SIM800.println("AT+CREG?");
+  waitResponse("+CREG: 0,");
+  delay(DELAY_MS);
+  //===================================================================================
+  //configurando o modo de texto SMS
+  SIM800.print("AT+CMGF=1\r");
+  waitResponse("OK");
+  delay(DELAY_MS);
+  //===================================================================================
+}
+
+
+
+
+
+//===================================================================================
+// --- gprs_connect estabelece conxão com a internet via SIM800L ---
+//===================================================================================
+void gprs_connect()
+{
+  //===================================================================================
+  //DESATIVAR GPRS
+  SIM800.println("AT+SAPBR=0,1");
+  waitResponse("OK",60000);
+  delay(DELAY_MS);
+  //===================================================================================
+  //Conectando ao GPRS: GPRS - perfil de portador 1
+  SIM800.println("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //define as configurações de APN para o provedor de rede do seu cartão SIM.
+  SIM800.println("AT+SAPBR=3,1,\"APN\","+APN);
+  waitResponse();
+  delay(DELAY_MS);
+  //===================================================================================
+  //define as configurações de nome de usuário para o provedor de rede do seu cartão SIM.
+  if(USER != ""){
+    SIM800.println("AT+SAPBR=3,1,\"USER\","+USER);
+    waitResponse();
+    delay(DELAY_MS);
+  }
+  //===================================================================================
+  //define as configurações de senha para o provedor de rede do seu cartão SIM.
+  if(PASS != ""){
+    SIM800.println("AT+SAPBR=3,1,\"PASS\","+PASS);
+    waitResponse();
+    delay(DELAY_MS);
+  }
+  //===================================================================================
+  //depois de executar o seguinte comando. a luz LED de
+  //sim800l pisca muito rápido (duas vezes por segundo)
+  //habilitar o GPRS: habilitar o portador 1
+  SIM800.println("AT+SAPBR=1,1");
+  waitResponse("OK", 30000);
+  delay(DELAY_MS);
+  //===================================================================================
+  //Obter endereço IP - Consulte o status do contexto do portador GPRS
+  SIM800.println("AT+SAPBR=2,1");
+  waitResponse("OK");
+  delay(DELAY_MS);
+  //===================================================================================
+}
+
+
+//===================================================================================
+// --- gprs_disconnect --
+// AT+CGATT = 1 modem conectado ao GPRS a uma rede.
+// AT+CGATT = 0 O modem não está conectado ao GPRS em uma rede
+//===================================================================================
+boolean gprs_disconnect()
+{
+  //===================================================================================
+  //Desconectar GPRS
+  SIM800.println("AT+CGATT=0");
+  waitResponse("OK",60000);
+  //===================================================================================
+  //DESATIVAR GPRS
+  //SIM800.println("AT+SAPBR=0,1");
+  //waitResponse("OK",60000);
+  //===================================================================================
+
+  return true;
+}
+
+
+
+//===================================================================================
+// --- gprs_disconnect ---
+// verifica se o gprs está conectado.
+// AT+CGATT = 1 modem conectado ao GPRS a uma rede.
+// AT+CGATT = 0 O modem não está conectado ao GPRS em uma rede
+//===================================================================================
+boolean is_gprs_connected()
+{
+  SIM800.println("AT+CGATT?");
+  if(waitResponse("+CGATT: 1",6000) == 1) { return false; }
+
+  return true;
+}
+
+
+
+
+
+//===================================================================================
+// --- Manuseio EM COMANDOS ---
+//boolean waitResponse(String esperado_answer="OK", unsigned int timeout=2000) //remova o comentário se houver erro de sintaxe (arduino)
+//===================================================================================
+boolean waitResponse(String expected_answer, unsigned int timeout) //uncomment if syntax error (esp8266)
+{
+  uint8_t x=0, answer=0;
+  String response;
+  unsigned long previous;
+    
+  //Clean the input buffer
+  while( SIM800.available() > 0) SIM800.read();
+  
+  //===================================================================================
+  previous = millis();
+  do{
+    //se os dados estiverem no UART INPUT BUFFER, lê-os
+    if(SIM800.available() != 0){
+        char c = SIM800.read();
+        response.concat(c);
+        x++;
+        //verifica se (response == expected_answer)
+        if(response.indexOf(expected_answer) > 0){
+            answer = 1;
+        }
+    }
+  }while((answer == 0) && ((millis() - previous) < timeout));
+  //===================================================================================
+  
+  Serial.println(response);
+  return answer;
+}
